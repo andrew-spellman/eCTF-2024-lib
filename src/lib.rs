@@ -1,8 +1,10 @@
 #![no_std]
 
+use core::arch::asm;
 use core::panic::PanicInfo;
 use max78000_hal::debug::attach_debug;
 use max78000_hal::debug_println;
+use max78000_hal::trng::TRNG;
 use max78000_hal::uart::{UART, UART0};
 
 extern "C" {
@@ -27,11 +29,13 @@ pub fn setup_uart() {
 pub extern "C" fn ap_function() {
     setup_uart();
 
+    let mut trng = TRNG::init();
     loop {
-        debug_println!(
-            "This is a test, of testing the test, for which I test the testing of test {}",
-            unsafe { max78000_hal::SYSTEM_CORE_CLOCK }
-        );
+        debug_println!("Random Number {}", trng.ready());
+
+        if trng.ready() {
+            panic!("trng data {}", trng.get_trng_data());
+        }
     }
 
     unsafe { boot() };
@@ -43,7 +47,14 @@ pub extern "C" fn comp_function() {
 }
 
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
+fn panic(info: &PanicInfo) -> ! {
     unsafe { LED_On(0) };
-    loop {}
+    loop {
+        debug_println!("\n\n==========\nPANIC: {}", info);
+        unsafe {
+            for _ in 0..100000000 {
+                asm!("nop");
+            }
+        }
+    }
 }
