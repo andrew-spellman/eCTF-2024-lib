@@ -9,4 +9,4 @@ crate-type = ["staticlib"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-max78000-hal = {git="https://github.com/ruste-ctf/MAX78000-hal.git"}
+max78000-hal = {path="/home/corigan01/Programming/ruste-ctf/hal"}
