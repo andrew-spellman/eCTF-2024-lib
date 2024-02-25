@@ -10,16 +10,16 @@ use max78000_hal::i2c::registers::Registers;
 use max78000_hal::i2c::{NoPort, I2C};
 use max78000_hal::memory_map::mmio;
 use max78000_hal::uart::{BaudRates, CharacterLength, ParityValueSelect, StopBits, UART, UART0};
-use max78000_hal::{debug_print, debug_println};
+use max78000_hal::{debug_print, debug_println, trng};
 
 extern "C" {
     pub fn boot();
 }
 
-pub fn setup_uart() {
+pub fn setup_uart(str: &'static str) {
     // Set within the scope of this function.
     // DO NOT MESS WITH THIS STATIC
-    static mut UART_DEBUG: Option<UART<UART0>> = None;
+    static mut UART_DEBUG: Option<BetterDebug> = None;
 
     // uart init
     let uart = UART::port_0_init(
@@ -29,16 +29,39 @@ pub fn setup_uart() {
         false,
         ParityValueSelect::OneBased,
         false,
-    );
+    )
+    .unwrap();
+
+    struct BetterDebug {
+        uart: UART<UART0>,
+        str: &'static str,
+    }
+
+    impl core::fmt::Write for BetterDebug {
+        fn write_str(&mut self, s: &str) -> core::fmt::Result {
+            for c in s.chars() {
+                match c {
+                    '\n' => self
+                        .uart
+                        .write_fmt(format_args!("\n[DEBUG ({})]: ", self.str))?,
+                    c => self.uart.write_char(c)?,
+                }
+            }
+
+            Ok(())
+        }
+    }
 
     // set static and attach debug
-    unsafe { UART_DEBUG = Some(uart) };
+    unsafe { UART_DEBUG = Some(BetterDebug { uart, str }) };
     attach_debug(unsafe { UART_DEBUG.as_mut().unwrap() });
+    delay();
+    debug_println!("Connected...");
 }
 
 #[no_mangle]
 pub extern "C" fn ap_function() {
-    setup_uart();
+    setup_uart("AP");
 
     delay();
     debug_println!("Resetting GPIO1");
@@ -133,13 +156,44 @@ pub extern "C" fn ap_function() {
         debug_println!("CUM");
         delay();
     }
-
-    unsafe { boot() };
 }
 
 #[no_mangle]
 pub extern "C" fn comp_function() {
-    unsafe { boot() }
+    setup_uart("COMP");
+
+    let mut i2c = I2C::init_port_1_slave(0x23).unwrap();
+
+    unsafe {
+        core::ptr::write_volatile((mmio::GLOBAL_CONTROL + 0x24) as *mut u32, 00);
+        core::ptr::write_volatile((mmio::GLOBAL_CONTROL + 0x48) as *mut u32, 00);
+    }
+
+    let dead_beef = [0xDE, 0xAD, 0xBE, 0xEF];
+
+    loop {
+        let mut iter = dead_beef.iter().copied();
+        debug_println!(
+            "{:#?}",
+            i2c.slave_transaction(
+                |byte| {
+                    debug_println!("Got Byte: {}", byte);
+                    Ok(())
+                },
+                || {
+                    let byte = match iter.next() {
+                        Some(byte) => byte,
+                        None => {
+                            iter = dead_beef.iter().copied();
+                            iter.next().unwrap()
+                        }
+                    };
+                    debug_println!("Sending Byte 0x{:02x}", byte);
+                    Ok(byte)
+                }
+            )
+        );
+    }
 }
 
 fn delay() {
