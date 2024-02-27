@@ -1,5 +1,8 @@
 #![no_std]
 
+mod ectf_params;
+mod host_msg;
+
 use core::arch::asm;
 use core::panic::PanicInfo;
 use core::ptr;
@@ -16,13 +19,15 @@ extern "C" {
     pub fn boot();
 }
 
-pub fn setup_uart(str: &'static str) {
-    // Set within the scope of this function.
-    // DO NOT MESS WITH THIS STATIC
-    static mut UART_DEBUG: Option<BetterDebug> = None;
+#[no_mangle]
+pub extern "C" fn ap_function() {
+    setup_uart("A");
 
-    // uart init
-    let mut uart = UART::port_0_init(
+    delay();
+    debug_println!("Stuffs");
+    delay();
+
+    let mut uart2 = UART::port_2_init(
         BaudRates::Baud115200,
         CharacterLength::EightBits,
         StopBits::OneBit,
@@ -32,49 +37,41 @@ pub fn setup_uart(str: &'static str) {
     )
     .unwrap();
 
-    delay();
-    uart.print_string("Connected...\n");
+    let uart0_ptr = mmio::UART_0;
+    let uart2_ptr = mmio::UART_2;
 
-    struct BetterDebug {
-        uart: UART<UART0>,
-        str: &'static str,
-    }
-
-    impl core::fmt::Write for BetterDebug {
-        fn write_str(&mut self, s: &str) -> core::fmt::Result {
-            for c in s.chars() {
-                #[cfg(debug_assertions)]
-                match c {
-                    '\n' => self.uart.write_fmt(format_args!("\n{}| ", self.str))?,
-                    c => self.uart.write_char(c)?,
-                }
-            }
-
-            Ok(())
-        }
-    }
-
-    // set static and attach debug
-    unsafe { UART_DEBUG = Some(BetterDebug { uart, str }) };
-    attach_debug(unsafe { UART_DEBUG.as_mut().unwrap() });
-}
-
-#[no_mangle]
-pub extern "C" fn ap_function() {
-    setup_uart("A");
-
-    let mut i2c = I2C::init_port_1_master().unwrap();
-    loop {
-        debug_println!("I2C Master Transaction!");
-        let mut bytes = [0u8; 4];
-        let transmit_bytes = [0xBA, 0xDB, 0xAB, 0xEE];
+    for offset in (0x00..=0x42).step_by(4) {
+        let uart0_b = uart0_ptr + offset;
+        let uart2_b = uart2_ptr + offset;
+        let uart_val0 = unsafe { core::ptr::read_volatile(uart0_b as *const u32) };
+        let uart_val2 = unsafe { core::ptr::read_volatile(uart2_b as *const u32) };
+        let xor = uart_val0 ^ uart_val2;
         debug_println!(
-            "{:#?}",
-            i2c.master_transaction(0x23, Some(&mut bytes), Some(&transmit_bytes))
+            "UART -- 0x{:04x}: {:032b} {:032b} = {:032b}",
+            offset,
+            uart_val0,
+            uart_val2,
+            xor,
         );
-        debug_println!("Got: {:#x?}", bytes);
+    }
+
+    loop {
+        uart2.print_string("!\n");
         delay();
     }
+
+    // let mut i2c = I2C::init_port_1_master().unwrap();
+    // loop {
+    //     debug_println!("I2C Master Transaction!");
+    //     let mut bytes = [0u8; 4];
+    //     let transmit_bytes = [0xBA, 0xDB, 0xAB, 0xEE];
+    //     debug_println!(
+    //         "{:#?}",
+    //         i2c.master_transaction(0x23, Some(&mut bytes), Some(&transmit_bytes))
+    //     );
+    //     debug_println!("Got: {:#x?}", bytes);
+    //     delay();
+    // }
 }
 
 #[no_mangle]
