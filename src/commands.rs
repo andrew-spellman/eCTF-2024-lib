@@ -40,16 +40,13 @@ pub fn boot_cmd() {
 }
 
 pub fn replace_cmd(rx_buffer: &[u8]) {
-    let (token, component_in, component_out) = match host_msg::parse_args(rx_buffer) {
-        (Some(token), Some(comp_in), Some(comp_out)) => {
-            let comp_in = u32::from_str_radix(&comp_in[2..], 16).unwrap();
-            let comp_out = u32::from_str_radix(&comp_out[2..], 16).unwrap();
-            (token, comp_in, comp_out)
-        }
-        _ => {
-            host_msg!(Error, "the input couldn't be parsed");
-            return;
-        }
+    let (token, component_in, component_out) = {
+        let mut split = core::str::from_utf8(rx_buffer).unwrap().split(" ");
+        (
+            split.next().unwrap(),
+            u32::from_str_radix(&split.next().unwrap()[2..], 16).unwrap(),
+            u32::from_str_radix(&split.next().unwrap()[2..], 16).unwrap(),
+        )
     };
     debug_println!(
         "received: {}, {:x}, {:x}",
@@ -61,15 +58,12 @@ pub fn replace_cmd(rx_buffer: &[u8]) {
 }
 
 pub fn attest_cmd(rx_buffer: &[u8]) {
-    let (pin, component) = match host_msg::parse_args(rx_buffer) {
-        (Some(token), Some(comp), _) => {
-            let comp = u32::from_str_radix(&comp[2..], 16).unwrap();
-            (token, comp)
-        }
-        _ => {
-            host_msg!(Error, "the input couldn't be parsed");
-            return;
-        }
+    let (pin, component) = {
+        let mut split = core::str::from_utf8(rx_buffer).unwrap().split(" ");
+        (
+            split.next().unwrap(),
+            u32::from_str_radix(&split.next().unwrap()[2..], 16).unwrap(),
+        )
     };
     debug_println!("received: {}, {:x}", pin, component);
     host_msg!(Success, "Attest");
