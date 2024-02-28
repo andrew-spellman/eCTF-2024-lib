@@ -1,12 +1,10 @@
 [package]
-name = "ectf-2024"
+name = "ectf_2024_lib"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
 crate-type = ["staticlib"]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-max78000-hal = {path="/home/corigan01/Programming/ruste-ctf/hal"}
+max78000-hal = { git = "https://github.com/ruste-ctf/MAX78000-hal.git" }

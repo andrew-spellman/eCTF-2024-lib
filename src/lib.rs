@@ -1,110 +1,98 @@
 #![no_std]
 
+mod commands;
 mod ectf_params;
+mod flash;
 mod host_msg;
+mod security;
 
-use core::arch::asm;
-use core::panic::PanicInfo;
-use core::ptr;
-use max78000_hal::debug::attach_debug;
-use max78000_hal::gcr::{peripheral_reset, registers, system_clock_enable};
-use max78000_hal::gpio::{GpioPin, OutputDriveStrength};
-use max78000_hal::i2c::registers::Registers;
-use max78000_hal::i2c::{NoPort, I2C};
-use max78000_hal::memory_map::mmio;
-use max78000_hal::uart::{BaudRates, CharacterLength, ParityValueSelect, StopBits, UART, UART0};
-use max78000_hal::{debug_print, debug_println, trng};
+use crate::{
+    commands::{attest_cmd, boot_cmd, list_cmd, replace_cmd},
+    host_msg::{receive_msg, setup_uart},
+};
+use core::{arch::asm, panic::PanicInfo};
+use max78000_hal::{
+    gpio::hardware::{led_blue, led_green, led_red},
+    i2c::I2C,
+    trng::TRNG,
+};
 
 extern "C" {
     pub fn boot();
 }
 
+/// Returns the currently provisioned IDs and the number of provisioned IDs for
+/// the current AP. This function is untilized in POST_BOOT functionality.
+pub extern "C" fn get_provisioned_ids(buffer: *mut u32) -> i32 {
+    _ = buffer;
+    0
+}
+
+/// Securely send data over I2C. This function is utilized in POST_BOOT functionality.
+pub extern "C" fn secure_send(i2c_address: u8, buffer: *const u8, len: u8) -> i32 {
+    _ = (i2c_address, buffer, len);
+    0
+}
+
+/// Securely receive data over I2C. This function is utilized in POST_BOOT functionality.
+pub extern "C" fn secure_receive(i2c_address: u8, buffer: *mut u8) -> i32 {
+    _ = (i2c_address, buffer);
+    0
+}
+
 #[no_mangle]
 pub extern "C" fn ap_function() {
+    flash::init(0x4B1D).unwrap();
     setup_uart("A");
 
-    delay();
-    debug_println!("Stuffs");
-    delay();
+    let mut i2c = I2C::init_port_1_master().unwrap();
 
-    let mut uart2 = UART::port_2_init(
-        BaudRates::Baud115200,
-        CharacterLength::EightBits,
-        StopBits::OneBit,
-        false,
-        ParityValueSelect::OneBased,
-        false,
-    )
-    .unwrap();
+    let green = led_green().unwrap();
+    green.set_output(false);
 
-    let uart0_ptr = mmio::UART_0;
-    let uart2_ptr = mmio::UART_2;
+    let _random = TRNG::init().get_trng_data();
 
-    for offset in (0x00..=0x42).step_by(4) {
-        let uart0_b = uart0_ptr + offset;
-        let uart2_b = uart2_ptr + offset;
-        let uart_val0 = unsafe { core::ptr::read_volatile(uart0_b as *const u32) };
-        let uart_val2 = unsafe { core::ptr::read_volatile(uart2_b as *const u32) };
-        let xor = uart_val0 ^ uart_val2;
-        debug_println!(
-            "UART -- 0x{:04x}: {:032b} {:032b} = {:032b}",
-            offset,
-            uart_val0,
-            uart_val2,
-            xor,
-        );
-    }
+    host_msg!(Debug, "Application Processor Started");
 
+    let mut uart_rx_buffer = [0u8; 100];
     loop {
-        uart2.print_string("!\n");
-        delay();
-    }
+        let uart_bytes_read = match receive_msg("Enter Command: ", &mut uart_rx_buffer) {
+            Ok(bytes_read) => bytes_read,
+            Err(_) => {
+                host_msg!(Error, "UART Buffer Overflow");
+                continue;
+            }
+        };
 
-    // let mut i2c = I2C::init_port_1_master().unwrap();
-    // loop {
-    //     debug_println!("I2C Master Transaction!");
-    //     let mut bytes = [0u8; 4];
-    //     let transmit_bytes = [0xBA, 0xDB, 0xAB, 0xEE];
-    //     debug_println!(
-    //         "{:#?}",
-    //         i2c.master_transaction(0x23, Some(&mut bytes), Some(&transmit_bytes))
-    //     );
-    //     debug_println!("Got: {:#x?}", bytes);
-    //     delay();
-    // }
+        // TODO: impl security::secure_master_transaction
+        // TODO: impl our security tactic here using ^
+
+        if &uart_rx_buffer[0..4] == "list".as_bytes() {
+            list_cmd(&mut i2c);
+        } else if &uart_rx_buffer[..4] == "boot".as_bytes() {
+            boot_cmd();
+        } else if &uart_rx_buffer[..7] == "replace".as_bytes() {
+            replace_cmd(&uart_rx_buffer[..uart_bytes_read]);
+        } else if &uart_rx_buffer[..6] == "attest".as_bytes() {
+            attest_cmd(&uart_rx_buffer[..uart_bytes_read]);
+        } else {
+            host_msg!(Error, "Unrecognized command '{}'", unsafe {
+                core::str::from_utf8_unchecked(&uart_rx_buffer[..uart_bytes_read])
+            });
+        }
+    }
 }
 
 #[no_mangle]
 pub extern "C" fn comp_function() {
     setup_uart("C");
 
-    let mut i2c = I2C::init_port_1_slave(0x23).unwrap();
+    let i2c = I2C::init_port_1_slave(0x23).unwrap();
+    _ = i2c;
 
-    let dead_beef = [0xDE, 0xAD, 0xBE, 0xEF];
-
-    loop {
-        let mut iter = dead_beef.iter().copied();
-        debug_println!(
-            "{:#?}",
-            i2c.slave_transaction(
-                |byte| {
-                    debug_println!("Got Byte: {}", byte);
-                    Ok(())
-                },
-                || {
-                    let byte = match iter.next() {
-                        Some(byte) => byte,
-                        None => {
-                            iter = dead_beef.iter().copied();
-                            iter.next().unwrap()
-                        }
-                    };
-                    debug_println!("Sending Byte 0x{:02x}", byte);
-                    Ok(byte)
-                }
-            )
-        );
-    }
+    // TODO: impl security::secure_slave_transaction using a buffered
+    // iterator adapter for the rx, and rx closures
+    // TODO: impl our security tactic here using ^
 }
 
 fn delay() {
@@ -117,15 +105,15 @@ fn delay() {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    let red = max78000_hal::gpio::hardware::led_red().unwrap();
-    let green = max78000_hal::gpio::hardware::led_green().unwrap();
-    let blue = max78000_hal::gpio::hardware::led_blue().unwrap();
+    let red = led_red().unwrap();
+    let green = led_green().unwrap();
+    let blue = led_blue().unwrap();
 
     red.set_output(true);
     green.set_output(true);
     blue.set_output(true);
     loop {
-        debug_println!("\n\n==========\nPANIC: {}", info);
+        host_msg!(Error, "\n\n==========\nPANIC: {}", info);
         red.set_output(true);
         delay();
         red.set_output(false);
