@@ -14,23 +14,12 @@ extern "C" {
     fn init_flash(magic: u32) -> i32;
     fn read_flash() -> FlashEntry;
     fn write_flash(entry: &FlashEntry);
-    fn poll_flash() -> i32;
 }
 
 pub fn init(magic: u32) -> Result<()> {
     let result = unsafe { init_flash(magic) };
     match result {
-        0 => {
-            unsafe {
-                let entry = read_flash();
-                FLASH = Some(match poll_flash() {
-                    0 => Ok(entry),
-                    1 => Err(ErrorKind::Fail),
-                    _ => unreachable!(),
-                }?)
-            }
-            Ok(())
-        }
+        0 => Ok(unsafe { FLASH = Some(read_flash()) }),
         1 => Err(ErrorKind::Fail),
         _ => unreachable!(),
     }
@@ -46,7 +35,7 @@ pub fn get_component_ids() -> Result<&'static [u32]> {
 }
 
 pub fn swap_component(id_old: u32, id_new: u32) -> Result<()> {
-    unsafe {
+    Ok(unsafe {
         FLASH
             .as_mut()
             .map(|flash| {
@@ -56,10 +45,6 @@ pub fn swap_component(id_old: u32, id_new: u32) -> Result<()> {
             .ok_or(ErrorKind::Uninitialized)?
             .ok_or(ErrorKind::BadParam)?;
         write_flash(FLASH.as_ref().unwrap());
-        match poll_flash() {
-            0 => Ok(()),
-            1 => Err(ErrorKind::Fail),
-            _ => unreachable!(),
-        }
-    }
+        FLASH = Some(read_flash());
+    })
 }

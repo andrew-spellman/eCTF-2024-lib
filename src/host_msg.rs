@@ -3,8 +3,7 @@ use core::ops::{Deref, DerefMut};
 use max78000_hal::{
     debug::attach_debug,
     debug_println,
-    error::{ErrorKind, Result},
-    uart::{BaudRates, CharacterLength, ParityValueSelect, StopBits, UART, UART0},
+    uart::{BaudRates, CharacterLength, Parity, ParityValueSelect, StopBits, UART, UART0},
 };
 
 struct HostMsg {
@@ -60,6 +59,7 @@ pub fn setup_uart(board_name: &'static str) {
         CharacterLength::EightBits,
         StopBits::OneBit,
         false,
+        Parity::Odd,
         ParityValueSelect::OneBased,
         false,
     )
@@ -114,23 +114,25 @@ macro_rules! host_msg {
     }};
 }
 
-pub fn receive_msg(prompt: &str, rx_buffer: &mut [u8]) -> Result<usize> {
-    host_msg!(Prompt, "{}", prompt);
-    let mut rx_byte_count = 0;
-    loop {
-        match unsafe { UART_DEBUG.as_mut().unwrap().uart.read_receive_fifo() } {
-            Ok(next_byte) => {
-                if next_byte as char == '\r' || rx_byte_count == rx_buffer.len() {
-                    break;
-                }
-                rx_buffer[rx_byte_count] = next_byte;
-                rx_byte_count += 1;
+impl Iterator for UartRef<'static> {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<<Self as Iterator>::Item> {
+        loop {
+            match self.read_receive_fifo() {
+                Ok(next_byte) => return Some(next_byte),
+                Err(_) => (), // uart hasn't received any data
             }
-            Err(_) => (), // uart hasn't received any data
         }
     }
-    if rx_byte_count == rx_buffer.len() {
-        return Err(ErrorKind::Overflow);
-    }
-    Ok(rx_byte_count)
+}
+
+pub fn read_arg(buffer: &mut [u8]) -> usize {
+    get_mut_uart()
+        .unwrap()
+        .take(buffer.len())
+        .take_while(|&b| b != b'\r')
+        .enumerate()
+        .map(|(i, b)| buffer[i] = b)
+        .count()
 }
