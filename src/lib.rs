@@ -17,29 +17,6 @@ use max78000_hal::{
     trng::TRNG,
 };
 
-extern "C" {
-    pub fn boot();
-}
-
-/// Returns the currently provisioned IDs and the number of provisioned IDs for
-/// the current AP. This function is untilized in POST_BOOT functionality.
-pub extern "C" fn get_provisioned_ids(buffer: *mut u32) -> i32 {
-    _ = buffer;
-    0
-}
-
-/// Securely send data over I2C. This function is utilized in POST_BOOT functionality.
-pub extern "C" fn secure_send(i2c_address: u8, buffer: *const u8, len: u8) -> i32 {
-    _ = (i2c_address, buffer, len);
-    0
-}
-
-/// Securely receive data over I2C. This function is utilized in POST_BOOT functionality.
-pub extern "C" fn secure_receive(i2c_address: u8, buffer: *mut u8) -> i32 {
-    _ = (i2c_address, buffer);
-    0
-}
-
 #[no_mangle]
 pub extern "C" fn ap_function() {
     flash::init(0x4B1D).unwrap();
@@ -93,6 +70,29 @@ pub extern "C" fn comp_function() {
     // TODO: impl security::secure_slave_transaction using a buffered
     // iterator adapter for the rx, and rx closures
     // TODO: impl our security tactic here using ^
+}
+
+extern "C" {
+    pub fn boot();
+}
+
+/// Returns the currently provisioned IDs and the number of provisioned IDs for
+/// the current AP. This function is untilized in POST_BOOT functionality.
+pub extern "C" fn get_provisioned_ids(buffer: *mut u32) -> i32 {
+    _ = buffer;
+    0
+}
+
+/// Securely send data over I2C. This function is utilized in POST_BOOT functionality.
+pub extern "C" fn secure_send(i2c_address: u8, buffer: *const u8, len: u8) -> i32 {
+    _ = (i2c_address, buffer, len);
+    0
+}
+
+/// Securely receive data over I2C. This function is utilized in POST_BOOT functionality.
+pub extern "C" fn secure_receive(i2c_address: u8, buffer: *mut u8) -> i32 {
+    _ = (i2c_address, buffer);
+    0
 }
 
 fn delay() {
