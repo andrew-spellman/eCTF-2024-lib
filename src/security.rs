@@ -3,7 +3,7 @@ use max78000_hal::{
     i2c::{I2CPort0, I2C},
 };
 
-pub fn secure_master_transaction(
+pub fn _secure_master_transaction(
     i2c: &mut I2C<I2CPort0>,
     address: usize,
     rx: Option<&mut [u8]>,
@@ -13,7 +13,7 @@ pub fn secure_master_transaction(
     _ = (i2c, address, rx, tx, random);
 }
 
-pub fn secure_slave_transaction<RXFun, TXFun>(
+pub fn _secure_slave_transaction<RXFun, TXFun>(
     i2c: &mut I2C<I2CPort0>,
     address: usize,
     rx: RXFun,

@@ -8,6 +8,7 @@ use max78000_hal::{
 
 struct HostMsg {
     uart: UART<UART0>,
+    #[cfg(debug_assertions)]
     board_name: &'static str,
 }
 
@@ -50,40 +51,6 @@ impl core::fmt::Write for HostMsg {
     }
 }
 
-static mut UART_DEBUG: Option<HostMsg> = None;
-
-pub fn setup_uart(board_name: &'static str) {
-    // uart init
-    let uart = UART::port_0_init(
-        BaudRates::Baud115200,
-        CharacterLength::EightBits,
-        StopBits::OneBit,
-        false,
-        Parity::Odd,
-        ParityValueSelect::OneBased,
-        false,
-    )
-    .unwrap();
-
-    // set static and attach debug
-    unsafe { UART_DEBUG = Some(HostMsg { uart, board_name }) };
-    attach_debug(unsafe { UART_DEBUG.as_mut().unwrap() });
-    debug_println!("\n");
-}
-
-static mut UART_REF: bool = false;
-
-pub fn get_mut_uart() -> Option<UartRef<'static>> {
-    if unsafe { UART_REF } {
-        None
-    } else {
-        unsafe { UART_REF = true };
-
-        let uart_ref = unsafe { &mut UART_DEBUG.as_mut()?.uart };
-        Some(UartRef(uart_ref))
-    }
-}
-
 #[macro_export]
 macro_rules! host_msg {
     (Error, $($arg:tt)*) => {{
@@ -112,6 +79,48 @@ macro_rules! host_msg {
     (Ack) => {{
         max78000_hal::debug::_print(format_args!("%ack%\n"));
     }};
+}
+
+static mut UART_DEBUG: Option<HostMsg> = None;
+
+pub fn setup_uart(board_name: &'static str) {
+    // uart init
+    let uart = UART::port_0_init(
+        BaudRates::Baud115200,
+        CharacterLength::EightBits,
+        StopBits::OneBit,
+        false,
+        Parity::Odd,
+        ParityValueSelect::OneBased,
+        false,
+    )
+    .unwrap();
+
+    // set static and attach debug
+    #[cfg(not(debug_assertions))]
+    unsafe {
+        UART_DEBUG = Some(HostMsg { uart })
+    };
+    #[cfg(debug_assertions)]
+    unsafe {
+        UART_DEBUG = Some(HostMsg { uart, board_name })
+    };
+    attach_debug(unsafe { UART_DEBUG.as_mut().unwrap() });
+    debug_println!("\n");
+    host_msg!(Info, "{} Started", board_name);
+}
+
+static mut UART_REF: bool = false;
+
+pub fn get_mut_uart() -> Option<UartRef<'static>> {
+    if unsafe { UART_REF } {
+        None
+    } else {
+        unsafe { UART_REF = true };
+
+        let uart_ref = unsafe { &mut UART_DEBUG.as_mut()?.uart };
+        Some(UartRef(uart_ref))
+    }
 }
 
 impl Iterator for UartRef<'static> {

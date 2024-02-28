@@ -69,20 +69,20 @@ pub extern "C" fn comp_function() {
 }
 
 /// Returns the currently provisioned IDs and the number of provisioned IDs for
-/// the current AP. This function is untilized in POST_BOOT functionality.
+/// the current AP. This function is  in uninitialized functionality.
 pub extern "C" fn get_provisioned_ids(buffer: *mut u32) -> i32 {
     let ids = flash::get_component_ids().unwrap();
     unsafe { copy_nonoverlapping(ids.as_ptr(), buffer, ids.len()) };
     ids.len() as i32
 }
 
-/// Securely send data over I2C. This function is utilized in POST_BOOT functionality.
+/// Securely send data over `I2C`. This function is utilized in `POST_BOOT` functionality.
 pub extern "C" fn secure_send(i2c_address: u8, buffer: *const u8, len: u8) -> i32 {
     _ = (i2c_address, buffer, len);
     0
 }
 
-/// Securely receive data over I2C. This function is utilized in POST_BOOT functionality.
+/// Securely receive data over `I2C`. This function is utilized in `POST_BOOT` functionality.
 pub extern "C" fn secure_receive(i2c_address: u8, buffer: *mut u8) -> i32 {
     _ = (i2c_address, buffer);
     0
