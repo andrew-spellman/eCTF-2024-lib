@@ -72,10 +72,6 @@ pub extern "C" fn comp_function() {
     // TODO: impl our security tactic here using ^
 }
 
-extern "C" {
-    pub fn boot();
-}
-
 /// Returns the currently provisioned IDs and the number of provisioned IDs for
 /// the current AP. This function is untilized in POST_BOOT functionality.
 pub extern "C" fn get_provisioned_ids(buffer: *mut u32) -> i32 {
