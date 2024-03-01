@@ -4,6 +4,7 @@ mod commands;
 mod ectf_params;
 mod flash;
 mod host_msg;
+mod secret;
 mod security;
 
 use crate::{
