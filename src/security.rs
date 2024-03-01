@@ -39,7 +39,7 @@ impl MasterChannel {
                 data[1] = rand ^ b'R';
                 data.iter_mut()
                     .skip(BLOCK_SIZE)
-                    .zip(raw.into_iter())
+                    .zip(raw.into_iter().map(|raw| raw ^ rand))
                     .for_each(|(data, raw)| *data = raw)
             }
         }
@@ -140,6 +140,143 @@ where
             Ok(_) => break Ok(()),
             Err(ErrorKind::NoResponse) => (),
             Err(err) => break Err(err),
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    extern crate std;
+    use std::vec::Vec;
+
+    #[test]
+    fn test_making_master_channel_list() {
+        for trng_key in 0..=255 {
+            let host_channel: Vec<u8> = MasterChannel::into_slave(TransactionKind::List, trng_key)
+                .take(16)
+                .collect();
+
+            assert_eq!(
+                host_channel,
+                &[
+                    trng_key,
+                    b'L' ^ trng_key,
+                    trng_key,
+                    trng_key,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn test_making_master_channel_boot() {
+        for trng_key in 0..=255 {
+            let host_channel: Vec<u8> = MasterChannel::into_slave(TransactionKind::Boot, trng_key)
+                .take(16)
+                .collect();
+
+            assert_eq!(
+                host_channel,
+                &[
+                    trng_key,
+                    b'B' ^ trng_key,
+                    trng_key,
+                    trng_key,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn test_making_master_channel_attest() {
+        for trng_key in 0..=255 {
+            let host_channel: Vec<u8> =
+                MasterChannel::into_slave(TransactionKind::Attest, trng_key)
+                    .take(16)
+                    .collect();
+
+            assert_eq!(
+                host_channel,
+                &[
+                    trng_key,
+                    b'A' ^ trng_key,
+                    trng_key,
+                    trng_key,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn test_making_master_channel_raw() {
+        for trng_key in 0..=255 {
+            let host_channel: Vec<u8> = MasterChannel::into_slave(
+                TransactionKind::Raw([trng_key; MAX_TRANSACTION_SIZE]),
+                trng_key,
+            )
+            // one extra byte to test trng_key ^ trng_key for the raw bytes
+            .take(17)
+            .collect();
+
+            assert_eq!(
+                host_channel,
+                &[
+                    trng_key,
+                    b'R' ^ trng_key,
+                    trng_key,
+                    trng_key,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                ]
+            );
         }
     }
 }

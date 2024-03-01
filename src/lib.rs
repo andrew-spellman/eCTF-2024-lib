@@ -98,6 +98,7 @@ fn delay() {
     }
 }
 
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     let red = led_red().unwrap();
