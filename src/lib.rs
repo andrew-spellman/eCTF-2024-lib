@@ -1,4 +1,5 @@
 #![no_std]
+#![feature(iter_array_chunks)]
 
 mod commands;
 mod ectf_params;
