@@ -11,14 +11,17 @@ mod security;
 use crate::{
     commands::{attest_cmd, boot_cmd, list_cmd, replace_cmd},
     host_msg::{read_arg, setup_uart},
+    security::MAX_TRANSACTION_SIZE,
 };
 use core::{arch::asm, panic::PanicInfo, ptr::copy_nonoverlapping};
 use max78000_hal::{
     aes::AES,
-    gpio::hardware::{led_green, led_red},
+    error::ErrorKind,
+    gpio::hardware::{led_blue, led_green, led_red},
     i2c::I2C,
     trng::TRNG,
 };
+use security::{secure_slave_transaction, TransactionKind};
 
 #[no_mangle]
 pub extern "C" fn ap_function() {
@@ -38,7 +41,7 @@ pub extern "C" fn ap_function() {
         let mut cmd_rx_buffer = [0; 7];
         let cmd_bytes_read = read_arg(&mut cmd_rx_buffer);
         if &cmd_rx_buffer[0..4] == "list".as_bytes() {
-            list_cmd(&mut i2c);
+            list_cmd(&mut i2c, &mut aes, &mut trng);
             continue;
         }
 
@@ -62,12 +65,27 @@ pub extern "C" fn ap_function() {
 pub extern "C" fn comp_function() {
     setup_uart("C");
 
-    let i2c = I2C::init_port_1_slave(0x23).unwrap();
-    _ = i2c;
+    let mut i2c = I2C::init_port_1_slave(0x23).unwrap();
+    let mut aes = AES::init();
 
-    // TODO: impl security::secure_slave_transaction using a buffered
-    // iterator adapter for the rx, and rx closures
-    // TODO: impl our security tactic here using ^
+    _ = led_blue().unwrap().set_output(false);
+
+    loop {
+        match secure_slave_transaction(&mut i2c, &mut aes, |transaction_kind| {
+            use TransactionKind::*;
+            match transaction_kind {
+                List => [0u8; MAX_TRANSACTION_SIZE],
+                Boot => [1u8; MAX_TRANSACTION_SIZE],
+                Attest => [1u8; MAX_TRANSACTION_SIZE],
+                Raw(_) => panic!("Unexpected Raw Data during pre-boot in comp_function()"),
+            }
+        }) {
+            Ok(()) => host_msg!(Debug, "Sec Slave TX OK"),
+            Err(ErrorKind::Abort) => (),
+            Err(ErrorKind::NoneAvailable) => (),
+            Err(err) => host_msg!(Error, "{:?}", err),
+        }
+    }
 }
 
 /// Returns the currently provisioned IDs and the number of provisioned IDs for

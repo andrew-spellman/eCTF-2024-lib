@@ -4,6 +4,7 @@ use crate::{
     ectf_params::{get_device, DeviceKind},
     flash, host_msg,
     host_msg::read_arg,
+    security::{secure_master_transaction, TransactionKind, MAX_TRANSACTION_SIZE},
 };
 use max78000_hal::{
     aes::AES,
@@ -12,12 +13,7 @@ use max78000_hal::{
     trng::TRNG,
 };
 
-enum _ComponentCommand {
-    Boot,
-    Attest,
-}
-
-pub fn list_cmd(i2c: &mut I2C<I2CPort1>) {
+pub fn list_cmd(i2c: &mut I2C<I2CPort1>, aes: &mut AES, trng: &mut TRNG) {
     for component_id in match flash::get_component_ids() {
         Ok(ids) => ids,
         Err(e) => {
@@ -28,34 +24,79 @@ pub fn list_cmd(i2c: &mut I2C<I2CPort1>) {
         host_msg!(Info, "P>0x{:08x}", component_id);
     }
 
+    /*
     for i2c_address in 0x8..0x78 {
         // I2C Blacklist:
         // 0x18, 0x28, and 0x36 conflict with separate devices on MAX78000FTHR
         if i2c_address == 0x18 || i2c_address == 0x28 || i2c_address == 0x36 {
             continue;
         }
-        match i2c.master_transaction(i2c_address, None, Some(&[0])) {
-            Ok(()) => host_msg!(Info, "F>0x{:08x}", i2c_address),
-            Err(_) => (),
+        match secure_master_transaction(i2c, aes, trng, i2c_address, TransactionKind::List) {
+            Ok(_) => host_msg!(Info, "F>0x{:08x}", i2c_address),
+            Err(ErrorKind::ComError) => (),
+            Err(err) => host_msg!(Error, "{:?}", err),
+        }
+    }
+    */
+
+    for i2c_address in match flash::get_component_ids() {
+        Ok(ids) => ids,
+        Err(e) => {
+            host_msg!(Error, "Flash {:?}", e);
+            return;
+        }
+    } {
+        match secure_master_transaction(
+            i2c,
+            aes,
+            trng,
+            *i2c_address as usize,
+            TransactionKind::List,
+        ) {
+            Ok(_) => host_msg!(Info, "F>0x{:08x}", i2c_address),
+            Err(ErrorKind::ComError) => (),
+            Err(err) => host_msg!(Error, "{:?}", err),
         }
     }
 
     host_msg!(Success, "List");
 }
 
-pub fn boot_cmd(i2c: I2C<I2CPort1>, aes: AES, trng: TRNG) -> ! {
+pub fn boot_cmd(mut i2c: I2C<I2CPort1>, mut aes: AES, mut trng: TRNG) -> ! {
     let boot_msg = match get_device() {
         DeviceKind::ApplicationProcessor { boot_msg, .. } => boot_msg,
         _ => unreachable!("boot_cmd() is only called by ap"),
     };
 
-    host_msg!(Info, "AP>{}", boot_msg);
-    host_msg!(Success, "Boot");
+    for component_id in match flash::get_component_ids() {
+        Ok(ids) => ids,
+        Err(e) => {
+            host_msg!(Error, "Flash {:?}", e);
+            panic!("Flash {:?}", e);
+        }
+    } {
+        let rx = match secure_master_transaction(
+            &mut i2c,
+            &mut aes,
+            &mut trng,
+            // component_id.clone() as usize,
+            0x00000023usize,
+            TransactionKind::Boot,
+        ) {
+            Ok(rx) => rx,
+            Err(err) => {
+                panic!("{:?}", err);
+            }
+        };
+        assert_eq!(rx, [1; MAX_TRANSACTION_SIZE]);
+        break;
+    }
 
     _ = (i2c, aes, trng);
-
     // TODO: move all held refs to statics for our c handlers to use
-    // TODO: securly  boot components
+
+    host_msg!(Info, "AP>{}", boot_msg);
+    host_msg!(Success, "Boot");
 
     unsafe { boot() }
 }

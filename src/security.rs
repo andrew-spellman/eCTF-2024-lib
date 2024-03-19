@@ -1,17 +1,17 @@
 use core::array::IntoIter;
 
-use crate::secret::SECRET;
+use crate::{host_msg, secret::SECRET};
 use max78000_hal::{
     aes::{AESIterExt, CipherType, Key, AES},
     error::{ErrorKind, Result},
-    i2c::{I2CPort0, I2C},
+    i2c::{I2CPort1, I2C},
     trng::TRNG,
 };
 
 const KEY: Key = Key::Bits128(&SECRET);
 
 const BLOCK_SIZE: usize = 16;
-const MAX_TRANSACTION_SIZE: usize = BLOCK_SIZE * 5;
+pub const MAX_TRANSACTION_SIZE: usize = BLOCK_SIZE * 4;
 
 const OVERALL_TRANSACTION_SIZE: usize = MAX_TRANSACTION_SIZE + BLOCK_SIZE;
 
@@ -78,17 +78,18 @@ impl MasterChannel {
 }
 
 pub fn secure_master_transaction(
-    i2c: &mut I2C<I2CPort0>,
+    i2c: &mut I2C<I2CPort1>,
     aes: &mut AES,
     trng: &mut TRNG,
     address: usize,
     kind: TransactionKind,
 ) -> Result<[u8; MAX_TRANSACTION_SIZE]> {
     let random = trng.get_trng_data() as u8;
+    let random = 0;
     aes.set_key(&KEY);
 
     MasterChannel::into_slave(kind, random)
-        .cipher(aes, CipherType::Encrypt)
+        // .cipher(aes, CipherType::Encrypt)
         .array_chunks()
         .try_for_each(|buffer: [u8; BLOCK_SIZE]| {
             i2c.master_transaction(address, None, Some(&buffer))
@@ -100,7 +101,7 @@ pub fn secure_master_transaction(
     rx_buffer
         .clone()
         .into_iter()
-        .cipher(aes, CipherType::Decrypt)
+        // .cipher(aes, CipherType::Decrypt)
         .map(|byte| byte ^ random)
         .zip(rx_buffer.iter_mut())
         .for_each(|(cipher, plain)| *plain = cipher);
@@ -109,7 +110,7 @@ pub fn secure_master_transaction(
 }
 
 pub fn secure_slave_transaction<TXFunc>(
-    i2c: &mut I2C<I2CPort0>,
+    i2c: &mut I2C<I2CPort1>,
     aes: &mut AES,
     mon: TXFunc,
 ) -> Result<()>
@@ -117,29 +118,65 @@ where
     TXFunc: FnOnce(TransactionKind) -> [u8; MAX_TRANSACTION_SIZE],
 {
     aes.set_key(&KEY);
+
+    let mut rx_buffer = [0; 64];
+    let mut rx_index = 0;
     let MasterChannel { trng_key, kind } = MasterChannel::from_master(
         &mut loop {
-            match i2c.slave_manual_pulling(&mut [0].into_iter().cycle()) {
-                Ok(rx_iter) => break Ok(rx_iter),
-                Err(ErrorKind::NoResponse) => (),
-                Err(err) => break Err(err),
+            match i2c.slave_manual_pulling(&mut [].into_iter()) {
+                Ok(rx_iter) => {
+                    host_msg!(Debug, "Stop");
+                    if rx_index >= rx_buffer.len() {
+                        continue;
+                    }
+                    rx_iter.for_each(|b| {
+                        rx_buffer[rx_index] = b;
+                        rx_index += 1;
+                    });
+                    break Ok(rx_buffer.into_iter());
+                }
+                Err(ErrorKind::Underflow) => {
+                    if rx_index != 0 || i2c.transaction_buffer.0 != 0 {
+                        host_msg!(
+                            Debug,
+                            "Underflow: {}, {}",
+                            rx_index,
+                            i2c.transaction_buffer.0
+                        );
+                    }
+                }
+                Err(ErrorKind::NoneAvailable) => (),
+                Err(err) => {
+                    host_msg!(Error, "rx_err: {:?}", err);
+                    break Err(err);
+                }
             }
         }?
         .into_iter()
-        .cipher(aes, CipherType::Decrypt),
+        .inspect(|x| host_msg!(Debug, "f{}", x)), // .cipher(aes, CipherType::Decrypt),
     )
     .ok_or(ErrorKind::Abort)?;
 
+    host_msg!(Debug, "pass");
+
     let mut resp_iter = mon(kind)
         .into_iter()
+        .inspect(|x| host_msg!(Debug, "s{}", x))
         .map(|byte| byte ^ trng_key)
-        .cipher(aes, CipherType::Encrypt);
+        .chain([0].into_iter().cycle());
+    // .cipher(aes, CipherType::Encrypt);
+
+    // while let Err(_) = i2c.slave_manual_pulling(&mut [].into_iter()) {}
 
     loop {
         match i2c.slave_manual_pulling(&mut resp_iter) {
             Ok(_) => break Ok(()),
-            Err(ErrorKind::NoResponse) => (),
-            Err(err) => break Err(err),
+            // Err(ErrorKind::NoResponse) => (),
+            Err(ErrorKind::NoneAvailable) => (),
+            Err(err) => {
+                host_msg!(Error, "1 {:?}", err);
+                break Err(err);
+            }
         }
     }
 }
